@@ -12,9 +12,9 @@
 # - Имена файлов обрабатываются безопасно (нулевой разделитель)
 
 # Запрос путей у пользователя
-printf "Введите путь к SOURCE [по умолчанию /source]: "
+printf "Введите путь к SOURCE [по умолчанию текущая папка]: "
 read -r SOURCE
-[ -z "$SOURCE" ] && SOURCE="/source"
+[ -z "$SOURCE" ] && SOURCE="$PWD"
 
 printf "Введите путь к BACKUP [по умолчанию /backup]: "
 read -r BACKUP
@@ -26,6 +26,16 @@ if [ ! -d "$SOURCE" ]; then
 fi
 if [ ! -d "$BACKUP" ]; then
     echo "BACKUP не найден: $BACKUP" >&2
+    exit 1
+fi
+
+# Проверка: SOURCE и BACKUP не должны совпадать
+SOURCE_ABS=$(cd "$SOURCE" && pwd)
+BACKUP_ABS=$(cd "$BACKUP" && pwd)
+if [ "$SOURCE_ABS" = "$BACKUP_ABS" ]; then
+    echo "ОШИБКА: SOURCE и BACKUP указывают на одну и ту же папку!" >&2
+    echo "SOURCE: $SOURCE_ABS" >&2
+    echo "BACKUP: $BACKUP_ABS" >&2
     exit 1
 fi
 
