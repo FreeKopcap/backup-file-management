@@ -31,17 +31,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Запрос маски у пользователя
-printf "Введите маску файлов (например, log*): "
+printf "Введите маску файлов (например, log*), или Enter для всех файлов: "
 read -r MASK
-if [ -z "$MASK" ]; then
-    echo "Маска не может быть пустой!" >&2
-    exit 1
-fi
 
 # Запрос директории у пользователя
 printf "Введите путь к директории [по умолчанию текущая папка]: "
 read -r TARGET_DIR
 [ -z "$TARGET_DIR" ] && TARGET_DIR="$PWD"
+
+# Раскрытие тильды в пути (~ -> $HOME)
+if [[ "$TARGET_DIR" == ~* ]]; then
+    TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
+fi
 
 if [ ! -d "$TARGET_DIR" ]; then
     echo "Директория не найдена: $TARGET_DIR" >&2
@@ -49,22 +50,39 @@ if [ ! -d "$TARGET_DIR" ]; then
 fi
 
 cd "$TARGET_DIR" || exit 1
+TARGET_DIR_ABS=$(pwd)
 
 # Сбор кандидатов к удалению: файлы нулевого размера, соответствующие маске
 tmp_list=$(mktemp)
-find . -type f -size 0 -name "$MASK" -print0 > "$tmp_list"
+if [ -z "$MASK" ]; then
+    # Если маска пустая, ищем все файлы нулевого размера
+    find . -type f -size 0 -print0 > "$tmp_list"
+    MASK_DESC="все файлы"
+else
+    # Если маска указана, используем её для фильтрации
+    find . -type f -size 0 -name "$MASK" -print0 > "$tmp_list"
+    MASK_DESC="маской '$MASK'"
+fi
 
 # Подсчет найденных файлов
 count=$(tr -cd '\0' < "$tmp_list" | wc -c | tr -d ' ')
 if [ "$count" -eq 0 ]; then
-    echo "Файлов нулевого размера с маской '$MASK' не найдено."
+    if [ -z "$MASK" ]; then
+        echo "Файлов нулевого размера не найдено."
+    else
+        echo "Файлов нулевого размера с маской '$MASK' не найдено."
+    fi
     rm -f "$tmp_list"
     exit 0
 fi
 
-echo "Найдено $count файл(ов) нулевого размера с маской '$MASK' в: $TARGET_DIR"
+echo "Найдено $count файл(ов) нулевого размера с $MASK_DESC в: $TARGET_DIR_ABS"
 echo "Список файлов для удаления:"
-find . -type f -size 0 -name "$MASK" | sed 's/^/  /'
+while IFS= read -r -d '' file; do
+    # Преобразуем относительный путь в абсолютный
+    full_path="${TARGET_DIR_ABS}/${file#./}"
+    echo "  $full_path"
+done < "$tmp_list"
 
 # Режим сухого прогона: только показываем список, не удаляем
 if [ "$DRY_RUN" = true ]; then
@@ -82,33 +100,35 @@ if [ "$YES_MODE" = true ]; then
     echo ""
     echo "Удаление файлов (без подтверждения)..."
     while IFS= read -r -d '' file; do
+        full_path="${TARGET_DIR_ABS}/${file#./}"
         if rm -- "$file" 2>/dev/null || rm "$file" 2>/dev/null; then
             deleted_count=$((deleted_count + 1))
-            echo "Удален: $file"
+            echo "Удален: $full_path"
         else
-            echo "Ошибка при удалении: $file" >&2
+            echo "Ошибка при удалении: $full_path" >&2
         fi
     done < "$tmp_list"
 else
     # Режим по умолчанию: подтверждение для каждого файла
     echo ""
-    while IFS= read -r -d '' file; do
-        printf "Удалить файл '%s'? [y/N]: " "$file"
-        read -r answer
+    while IFS= read -r -d '' file <&3; do
+        full_path="${TARGET_DIR_ABS}/${file#./}"
+        printf "Удалить файл '%s'? [y/N]: " "$full_path"
+        read -r answer < /dev/tty
         case "$answer" in
             y|Y|yes|YES)
                 if rm -- "$file" 2>/dev/null || rm "$file" 2>/dev/null; then
                     deleted_count=$((deleted_count + 1))
-                    echo "Удален: $file"
+                    echo "Удален: $full_path"
                 else
-                    echo "Ошибка при удалении: $file" >&2
+                    echo "Ошибка при удалении: $full_path" >&2
                 fi
                 ;;
             *)
-                echo "Пропущен: $file"
+                echo "Пропущен: $full_path"
                 ;;
         esac
-    done < "$tmp_list"
+    done 3< "$tmp_list"
 fi
 
 rm -f "$tmp_list"
